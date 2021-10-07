@@ -90,7 +90,6 @@ def write_back_matched_file(config_pathname, data_type, owner=None):
         SET MATCH_LEVEL = :MATCH_LEVEL, 
             DUNS_NBR = :DUNS_NBR 
         WHERE ID = :ID"""
-#        print(stmt_text)
 
         buffer = []
         rows = 0
