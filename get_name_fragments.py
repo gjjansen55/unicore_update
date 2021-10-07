@@ -28,7 +28,7 @@ import logging
 import os.path
 import time
 
-import cx_Oracle
+import afl.dbconnections
 
 REPORTING_INTERVAL = 500000
 
@@ -45,6 +45,9 @@ ORGANIZATION_TYPES = set(['A', 'ASSOCIACAO',
                           'W',
                           'Z'])
 
+UNWANTED_AFFIXES = ['AND', 'OF', 'THE']
+
+
 def make_fragmenter(stopwords):
     """ Given a list of stopwords, return a function to return a list
     of useful substrings of the name.
@@ -57,28 +60,36 @@ def make_fragmenter(stopwords):
         Probably we could pick something by removing digraphs also, but
         that is for another day.
         The except branch is to catch cases where we run out of words,
-        perhaps if the 1960s band 'The Association' were in the list."""
+        perhaps if the 1960s band 'The Association' were in the list.
+
+        Some non-obvious points about names:
+        fvt is 'first valid token'
+        lvt is 'last valid token'
+        UNWANTED_AFFIXES holds words that may not appear at the beginning
+        or end of a string."""
 
         tokens = [t.strip(' .,') for t in name.split(' ')
                   if t.strip(' .,') != '']
 
-        i = 0
         variants = set([name])
         try:
-            while i < len(tokens) and tokens[i] in ARTICLES:
-                i += 1
-            if i == len(tokens):
+            fvt = 0
+            while fvt < len(tokens) and tokens[fvt] in ARTICLES:
+                fvt += 1
+            if fvt == len(tokens):
                 return variants
-            j = len(tokens) - 1
-            while j >= 0 and tokens[j] in ORGANIZATION_TYPES:
-                j -= 1
-            for m in range(i, j+2):
-                for n in range(m+1, j+2):
-                    if n == m + 1 and len(tokens[m]) == 1:
+            lvt = len(tokens) - 1
+            while lvt >= 0 and tokens[lvt] in ORGANIZATION_TYPES:
+                lvt -= 1
+            for i in range(fvt, lvt + 1):
+                if tokens[i] in UNWANTED_AFFIXES:
+                    continue
+                for j in range(i, lvt+1):
+                    if tokens[j] in UNWANTED_AFFIXES:
                         continue
-                    fragment = ' '.join(tokens[m:n])
+                    fragment = ' '.join(tokens[i:j+1])
                     if fragment not in stopwords:
-                        variants.add(' '.join(tokens[m:n]))
+                        variants.add(fragment)
         except IndexError:
             print('failed to tokenize "%s"' % name)
             pass
@@ -129,31 +140,16 @@ def get_name_fragments(username, output_directory):
     output_directory is the directory in which tab-delimited files
     will be written."""
 
-    # def make_handles(output_directory):
-    #     """ write files by initial character. """
-
-    #     retval = {}
-    #     retval{'1'} = open(os.path.join(output_directory, '1.txt'))
-    #     retval{'mv'} = open(os.path.join(output_directory, 'MV.txt'))
-    #     for i in range(65,91):
-    #         ltr = chr(i)
-    #         retval{ltr} = open(os.path.join(output_directory, '%s.txt' % ltr))
-
-    #     return retval
-                           
 
     logging.basicConfig(level=logging.DEBUG)
-    dsn = cx_Oracle.makedsn('portal6.aflcio.org', 1521,
-                            service_name='pdb5.aflciosubnet1.aflcio1.oraclevcn.com')
-    password = 'mimi' # input('password for %s: ' % username)
-    conn = cx_Oracle.connect(username, password, dsn)
+    conn = afl.dbconnections.connect('unicore_helper')
     stopwords = get_stopwords(conn)
     fragmenter = make_fragmenter(stopwords)
     rows, fragments_written = 0, 0
     handler = _make_handler(output_directory)
     cur = conn.cursor()
-    cur.execute("""SELECT duns_nbr, business_name, secondary_name
-        FROM business_common""")
+    cur.execute(f"""SELECT duns_nbr, business_name, secondary_name
+        FROM {username}.business_common""")
     while True:
         row = cur.fetchone()
         if row is None:
